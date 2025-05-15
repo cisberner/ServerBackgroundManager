@@ -1,0 +1,229 @@
+﻿@page "/"
+@using FW.Client
+@using SixLabors.ImageSharp
+@using SixLabors.ImageSharp.Processing
+@using SixLabors.ImageSharp.PixelFormats
+@using SixLabors.ImageSharp.Drawing.Processing
+@using SixLabors.Fonts
+@using System.IO
+
+<style>
+    .color-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    }
+</style>
+<style>
+    .form-row {
+    display: grid;
+    grid-template-columns: 120px 1fr; /* Adjust 120px as needed for label width */
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.5em;
+    max-width: 400px;
+    }
+</style>
+
+<PageTitle>Server Background</PageTitle>
+
+<p>
+    <label class="color-label">
+        Background Color:
+        <input type="color" @bind="BackgroundColorHex" />
+    </label>
+
+    <label class="color-label">
+        Text Color:
+        <input type="color" @bind="TextColorHex" />
+    </label>
+</p>
+
+<div class="form-row">
+    <label for="titleInput">Title:</label>
+    <input id="titleInput" @bind="TitleText" />
+</div>
+<div class="form-row">
+    <label for="subtitleInput">Subtitle:</label>
+    <input id="subtitleInput" @bind="SubtitleText" />
+</div>
+<div class="form-row">
+    <label for="footerInput">Footer:</label>
+    <input id="footerInput" @bind="FooterText" />
+</div>
+
+<p>
+    <button class="btn btn-primary" @onclick="Generate">Generate</button>
+</p>
+
+@code {
+
+    [Inject] protected BrowserService? browserService { get; set; }
+    [Inject] protected IJSRuntime? js { get; set; }
+    [Inject] public HttpClient Http { get; set; }
+
+    BrowserDimension? BrowserDimension { get; set; }
+    private string? IpAddress { get; set; }
+
+
+    private string TitleText { get; set; } = "";
+    private string SubtitleText { get; set; } = "";
+    private string FooterText { get; set; } = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        await DoRefresh();
+        await FetchIpAddress();
+    }
+
+    private async Task DoRefresh()
+    {
+        if (browserService != null)
+        {
+            BrowserDimension = await browserService.GetDimensions();
+        }
+        StateHasChanged();
+    }
+
+    private string BackgroundColorHex { get; set; } = "#add8e6"; // Default: light blue
+    private string TextColorHex { get; set; } = "#a9a9a9"; // Default: darkgrey
+
+    public async Task Generate()
+    {
+
+        await DoRefresh();
+
+        // Set image size
+        int width = BrowserDimension?.Width ?? 400;
+        int height = BrowserDimension?.Height ?? 300;
+
+        // Create a new image with light blue background
+        using (var image = new Image<Rgba32>(width, height))
+        {
+            // Fill background with light blue
+            image.Mutate(ctx => ctx.Fill(HexToColor(BackgroundColorHex)));
+
+            // Load font from wwwroot
+            var fontUrl = "VERDANAB.TTF";
+            var fontStream = await Http.GetStreamAsync(fontUrl);
+            var fontCollection = new SixLabors.Fonts.FontCollection();
+            var font = fontCollection.Add(fontStream);
+
+            // Font sizes (relative to image height)
+            float titleFontSize = height / 12f;
+            float subtitleFontSize = height / 18f;
+            float footerFontSize = height / 30f;
+            float ipFontSize = height / 30f;
+
+            var titleFont = font.CreateFont(titleFontSize);
+            var subtitleFont = font.CreateFont(subtitleFontSize);
+            var footerFont = font.CreateFont(footerFontSize);
+            var ipFont = font.CreateFont(ipFontSize);
+
+            // X position: 30% from the left
+            float x = width * 0.3f;
+
+            // Y positions: adjust as needed for spacing
+            float yTitle = height * 0.2f;
+            float ySubtitle = yTitle + titleFontSize + 10;
+            float yFooter = ySubtitle + subtitleFontSize + 15;
+            float yip = yFooter + footerFontSize + 15;
+
+            // Draw Title
+            if (TitleText.Length > 0)
+            {
+                var titleOptions = new RichTextOptions(titleFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Origin = new PointF(x, yTitle)
+                    };
+                image.Mutate(ctx => ctx.DrawText(titleOptions, TitleText, HexToColor(TextColorHex)));
+            }
+
+            // Draw Subtitle
+            if (SubtitleText.Length > 0)
+            {
+                var subtitleOptions = new RichTextOptions(subtitleFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Origin = new PointF(x, ySubtitle)
+                    };
+                image.Mutate(ctx => ctx.DrawText(subtitleOptions, SubtitleText, HexToColor(TextColorHex)));
+            }
+
+            // Draw Footer
+            if (FooterText.Length > 0)
+            {
+                var footerOptions = new RichTextOptions(footerFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Origin = new PointF(x, yFooter)
+                    };
+                image.Mutate(ctx => ctx.DrawText(footerOptions, FooterText, HexToColor(TextColorHex)));
+            }
+
+            var ipOptions = new RichTextOptions(ipFont)
+                {
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Origin = new PointF(x, yip)
+                };
+            image.Mutate(ctx => ctx.DrawText(ipOptions, IpAddress ?? "", HexToColor(TextColorHex)));
+
+            // Save to BMP and download
+            using (var ms = new MemoryStream())
+            {
+                image.Save(ms, new SixLabors.ImageSharp.Formats.Bmp.BmpEncoder());
+                var bytes = ms.ToArray();
+                var base64Img = Convert.ToBase64String(bytes);
+                await js.InvokeAsync<object>("saveAsFile", "Background.bmp", base64Img);
+            }
+        }
+    }
+
+    private Color HexToColor(string hex)
+    {
+        if (hex.StartsWith("#"))
+            hex = hex.Substring(1);
+
+        if (hex.Length == 6)
+        {
+            var r = Convert.ToByte(hex.Substring(0, 2), 16);
+            var g = Convert.ToByte(hex.Substring(2, 2), 16);
+            var b = Convert.ToByte(hex.Substring(4, 2), 16);
+            return Color.FromRgb(r, g, b);
+        }
+        else if (hex.Length == 8)
+        {
+            var a = Convert.ToByte(hex.Substring(0, 2), 16);
+            var r = Convert.ToByte(hex.Substring(2, 2), 16);
+            var g = Convert.ToByte(hex.Substring(4, 2), 16);
+            var b = Convert.ToByte(hex.Substring(6, 2), 16);
+            return Color.FromRgba(r, g, b, a);
+        }
+        else
+        {
+            return Color.LightBlue; // fallback
+        }
+    }
+
+    private async Task FetchIpAddress()
+    {
+        try
+        {
+            var response = await Http.GetStringAsync("https://api.ipify.org?format=json");
+            // response is like: {"ip":"1.2.3.4"}
+            var ip = System.Text.Json.JsonDocument.Parse(response).RootElement.GetProperty("ip").GetString();
+            IpAddress = ip;
+        }
+        catch
+        {
+            IpAddress = "Unavailable";
+        }
+        StateHasChanged();
+    }
+}
